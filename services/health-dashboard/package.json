@@ -8,8 +8,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "npx serve . -p 3000",
-    "build": "tsc -p tsconfig.json && test -f styles.css",
+    "dev": "node init && npx serve . -p 3000",
+    "build": "node init && tsc -p tsconfig.json && test -f styles.css",
     "lint": "eslint .",
     "test": "node --test src/dashboard.test.js"
   },

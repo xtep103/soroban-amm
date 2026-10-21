@@ -12,3 +12,4 @@ __pycache__/
 **/test_snapshots/
 .soroban-amm.deploy.env
 optimized-artifacts/
+config.bat
