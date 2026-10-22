@@ -21,7 +21,7 @@ Defined in [contracts/oracle_aggregator/src/lib.rs](../contracts/oracle_aggregat
 | 2 | `NotInitialized` | A function was called before `initialize`. | Call `initialize` first. |
 | 3 | `NotAdmin` | The caller did not match the stored admin address. | Use the correct admin keypair. |
 | 4 | `SourceAlreadyRegistered` | `register_source` was called with an address already in the registry. | Remove and re-register, or use a different address. |
-| 5 | `SourceNotFound` | `remove_source` or `set_source_weight` referenced an unknown address. | Check `list_sources()` for registered addresses. |
+| 5 | `SourceNotFound` | `remove_source` or `set_source_weight` referenced an unknown address. | Check `list_sources(pair, cursor, limit)` for registered addresses. |
 | 6 | `InsufficientSources` | Fewer than `MIN_VALID_SOURCES` fresh, agreeing sources were available, or `get_price` was called with insufficient confidence. | Register more sources or widen the deviation band. |
 | 7 | `InvalidStaleness` | `max_staleness_seconds` was zero. | Use a positive value. |
 | 8 | `InvalidDeviation` | `max_deviation_bps` was zero or exceeded `BPS_DENOMINATOR` (10 000). | Use a value in `1..=10_000`. |
@@ -30,6 +30,10 @@ Defined in [contracts/oracle_aggregator/src/lib.rs](../contracts/oracle_aggregat
 | 11 | `NoPendingAdmin` | `accept_admin` was called when no admin transfer is in progress. | Call `propose_admin` first to nominate a successor. |
 | 12 | `WrongAdmin` | `accept_admin` was called by an address that does not match the pending nominee. | Have the correct address (the one passed to `propose_admin`) call `accept_admin`. |
 | 13 | `Paused` | The aggregator has been paused. | Wait for the admin to call `unpause`. |
+| 14 | `InvalidPair` | A pair used the same token address on both sides. | Supply two distinct token contract addresses. |
+| 15 | `TooManySources` | A pair already has the bounded maximum of 16 sources. | Remove or replace an existing source before adding another. |
+| 16 | `InvalidPage` | A paginated pair/source view used a zero limit or a limit above 50. | Use a limit in `1..=50`. |
+| 17 | `PairNotFound` | `remove_pair` referenced a pair that is not registered. | Check `list_pairs` before removing the pair. |
 
 > **ABI change (#689):** `AggregatedPrice.confidence` is now the **summed weight**
 > of agreeing sources (not a raw count). A source with weight 10 000 contributes
@@ -67,6 +71,14 @@ Defined in [contracts/amm/src/lib.rs](../contracts/amm/src/lib.rs) as `AmmError`
 | 22 | `PoolDrained` | The pool has entered the terminal `Drained` state after an `emergency_withdraw` or `exec_multisig_emergency_wd` (#1095). All liquidity, swap, flash-loan, fee-withdrawal, unpause, recovery, and repeat emergency-withdrawal entrypoints are permanently disabled so pre-existing LP tokens cannot drain subsequent deposits. | Deploy a new pool contract; a drained pool is permanently retired. |
 | 23 | `QuorumNotMet` | `exec_multisig_emergency_wd` was called while the number of collected signer approvals was below `MultisigQuorum` (#1095). | Collect additional signer approvals via `approve_emergency_withdraw` until `approvals.len() >= quorum`. |
 | 24 | `NoPendingProposal` | `exec_multisig_emergency_wd` was called when no multisig emergency withdrawal proposal has been created (#1095). | Have a multisig signer call `propose_emergency_withdraw` first. |
+| 25 | `QuorumNotReached` | `exec_multisig_emergency_wd` was called while the number of collected signer approvals was below `MultisigQuorum`. Distinct from `QuorumNotMet` so signers and tooling can tell a too-early execution apart from a governance quorum failure. | Collect additional signer approvals via `approve_emergency_withdraw` until `approvals.len() >= quorum`. |
+| 26 | `NoPendingProposal` | `exec_multisig_emergency_wd` was called when no multisig emergency withdrawal proposal has been created. Distinct from `NoPendingAdmin` so tooling can tell a missing proposal apart from a missing admin nomination. | Have a multisig signer call `propose_emergency_withdraw` first. |
+| 27 | `InvalidQuorum` | `set_multisig` was called with `quorum > signers.len()`, or with a quorum that cannot be satisfied by the supplied signer set. | Pass `quorum` in `1..=signers.len()`, or `0` only through the multisig flow to disable the guard. |
+| 28 | `EmergencyNotAnnounced` | `emergency_withdraw` was called without a prior `announce_emergency_withdraw`, or after `cancel_emergency_withdraw` cleared the announcement. | Call `announce_emergency_withdraw(to)` first and wait for `EMERGENCY_DELAY_SECS`. |
+| 29 | `EmergencyDelayNotElapsed` | `emergency_withdraw` or `exec_multisig_emergency_wd` was called before `EMERGENCY_DELAY_SECS` elapsed since the announcement (or since quorum was reached for the multisig path). | Wait for the configured delay after announcing (single-admin) or after collecting quorum (multisig). |
+| 30 | `EmergencyNotPaused` | `emergency_withdraw` was called while the pool is not paused. The emergency path requires the pool to be paused first. | Call `pause()` before `emergency_withdraw`. |
+| 31 | `InvalidEmergencyRecipient` | `to` was the pool contract itself or the LP token contract on `emergency_withdraw`, `announce_emergency_withdraw`, or `exec_multisig_emergency_wd`. | Pass a recipient address that is neither `env.current_contract_address()` nor the LP token. |
+| 32 | `MultisigGuardActive` | `set_multisig` attempted to change or disable the multisig guard while `MultisigQuorum > 0` without going through the multisig propose/approve/execute flow. | Propose the change through the multisig (same quorum) or wait out the timelock. |
 
 ---
 
@@ -100,6 +112,14 @@ Defined in [contracts/amm-sdk/src/types.rs](../contracts/amm-sdk/src/types.rs) a
 | 22 | `PoolDrained` | Pool entered terminal `Drained` state after emergency withdrawal (#1095). | Deploy a new pool; drained pools are permanently retired. |
 | 23 | `QuorumNotMet` | Multisig emergency withdrawal approvals are below `MultisigQuorum` (#1095). | Collect enough signer approvals before executing. |
 | 24 | `NoPendingProposal` | `exec_multisig_emergency_wd` called with no active multisig proposal (#1095). | Call `propose_emergency_withdraw` first. |
+| 25 | `QuorumNotReached` | Multisig emergency withdrawal approvals are below `MultisigQuorum`. | Collect enough signer approvals before executing. |
+| 26 | `NoPendingProposal` | `exec_multisig_emergency_wd` called with no active multisig proposal. | Call `propose_emergency_withdraw` first. |
+| 27 | `InvalidQuorum` | `set_multisig` quorum exceeds the signer count. | Pass `quorum` in `1..=signers.len()`. |
+| 28 | `EmergencyNotAnnounced` | `emergency_withdraw` called without a prior announcement. | Call `announce_emergency_withdraw(to)` first. |
+| 29 | `EmergencyDelayNotElapsed` | Emergency withdrawal called before `EMERGENCY_DELAY_SECS` elapsed. | Wait for the configured delay. |
+| 30 | `EmergencyNotPaused` | `emergency_withdraw` called while the pool is not paused. | Call `pause()` first. |
+| 31 | `InvalidEmergencyRecipient` | Recipient is the pool or the LP token. | Pass a different recipient. |
+| 32 | `MultisigGuardActive` | `set_multisig` tried to change the guard without the multisig flow. | Propose through the multisig. |
 
 ---
 
@@ -231,6 +251,7 @@ Defined in [contracts/twal_consumer/src/lib.rs](../contracts/twal_consumer/src/l
 | 10 | `TooManyPools` | `get_twal_batch` was called with more pools than `MAX_TRACKED_POOLS`. | Split the request into smaller batches. |
 | 11 | `CrossContractCallFailed` | A pool's liquidity-oracle call failed at the host level or the callee panicked (non-contract address, buggy pool). Only ever appears as a `TwalEntry.error_code` from `get_twal_all_safe`/`get_twal_batch`, or as the `Err` from `get_twal_all` once any entry fails this way. | Investigate the specific pool with `get_twal_batch([pool], window)`; consider `remove_tracked_pool` if it is permanently dead. |
 | 12 | `MissingClAccumulator` | A CL TWAL query found a stored `LiquiditySnapshot` for the pool but no `ClAccumulator` entry, so there is no running liquidity-cumulative to extrapolate to now. | Call `save_cl_snapshot` for the pool (it writes both) before querying `get_cl_twal`. |
+| 13 | `ArithmeticOverflow` | AMM reserve multiplication or ledger-time cumulative extrapolation exceeded the signed 128-bit accounting range. | Treat the quote as unavailable and investigate the pool's reserve scale before retrying. |
 
 `get_twal_all_safe` and `get_twal_batch` never return an `Err` for a single bad
 pool — they return a `TwalEntry` with `ok: false` and `error_code` set to one
@@ -359,6 +380,11 @@ Defined in [contracts/incentive_campaigns/src/lib.rs](../contracts/incentive_cam
 | 17 | `NoLpSupply` | The LP token's total supply is 0. | Seed the pool with liquidity. |
 | 18 | `NoPendingRewards` | The provider has no rewards accrued since their last claim. | Wait for rewards to accumulate over time. |
 | 19 | `RecordNotFound` | `get_distribution_record` was given an unknown id. | Use an id from `list_distribution_records` / `get_claim_history`. |
+| 20 | `NoStake` | `claim_rewards` was called on a stake-based campaign by an address with no stake and no accrued rewards, or `unstake` by an address with no stake. | Call `stake` first. |
+| 21 | `InvalidStakeAmount` | `stake` or `unstake` was given a zero or negative amount. | Pass an amount > 0. |
+| 22 | `InsufficientStake` | `unstake` asked for more than the caller has staked in the campaign. | Unstake at most `get_stake(campaign_id, provider)`. |
+| 23 | `CampaignEnded` | `stake` was called at or after the campaign's `end_time`. | Stake before the campaign ends; `unstake` and `claim_rewards` stay available. |
+| 24 | `LegacyCampaign` | `stake` was called on a campaign created before the stake-based model. | Legacy campaigns keep paying from the live LP balance; stake only into campaigns created after the upgrade. See [incentive-campaigns.md](incentive-campaigns.md). |
 
 
 
@@ -417,7 +443,9 @@ Defined in [contracts/router/src/lib.rs](../contracts/router/src/lib.rs) as `Rou
 | 7 | `PoolNotFound` | The factory returned no pool for the token pair at some hop. | Ensure a pool exists for every adjacent pair; call `is_path_routable` to check before quoting. |
 | 8 | `SlippageExceeded` | Realized output `< min_amount_out`, or required input `> max_in`. | Widen the slippage bounds or recalculate the path quote. |
 | 9 | `Paused` | `swap_exact_in` or `swap_exact_out` was called while the router is paused. Quotes and path views stay callable. | Wait for the admin to call `unpause`; check `is_paused` first. |
-| 10 | `Unauthorized` | `pause` or `unpause` was called with an `admin` address that does not match the stored admin. | Pass the stored admin address and sign with its key. |
+| 10 | `Unauthorized` | An admin-only operation used the wrong admin, or `accept_admin` was called by an address other than the nominee. | Pass the stored or nominated address and sign with its key. |
+| 11 | `InvalidFactory` | `initialize` could not call the factory's `get_pool_count` interface. | Pass a deployed factory contract address. |
+| 12 | `NoPendingAdmin` | `accept_admin` was called without a pending nomination. | Call `propose_admin` first. |
 
 ---
 
@@ -448,6 +476,8 @@ Defined in [contracts/staking/src/lib.rs](../contracts/staking/src/lib.rs) as `S
 | 19 | `BatchTooLarge` | `settle_boost_batch` or `register_existing_stakers` was given more than `MAX_BATCH_SIZE` (50) addresses. | Split the list into chunks of at most 50 addresses per call. |
 | 20 | `NoPendingAdmin` | `accept_admin` was called when no admin transfer is in progress. | Call `propose_admin` first to nominate a successor. |
 | 21 | `WrongAdmin` | `accept_admin` was called by an address that does not match the pending nominee. | Have the correct address (the one passed to `propose_admin`) call `accept_admin`. |
+| 22 | `IdenticalTokens` | `initialize` or `initialize_with_boost_config` was given the same address as LP token and reward token. The reward accounting treats the whole reward-token balance as reward funds, so stakers' principal would be counted as rewards. | Pass two different token contracts. |
+| 23 | `MigrationOutOfOrder` | `migrate_staker_index` was called with an `offset` other than the next unmigrated position. | Start at `offset = 0` and continue with the previous `offset + limit`. |
 
 ---
 
@@ -577,4 +607,3 @@ bash scripts/check_error_docs.sh
 
 CI automatically runs `make check-docs` on every pull request and push to prevent documentation drift.
 (TODO)
-

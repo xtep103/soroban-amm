@@ -1,0 +1,27 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "issue-1152-abi-docs",
+    "issue-1153-release-pipeline-pr",
+    "issue-1158-amm-simulator",
+    "issue-1160-router-lifecycle",
+    "main",
+    "origin"
+  ],
+  "parent": {
+    "issue-1152-abi-docs": "main",
+    "issue-1153-release-pipeline-pr": "main",
+    "issue-1158-amm-simulator": "main",
+    "issue-1160-router-lifecycle": "main",
+    "main": null,
+    "origin": "main"
+  },
+  "order": [
+    "main",
+    "issue-1152-abi-docs",
+    "issue-1153-release-pipeline-pr",
+    "issue-1158-amm-simulator",
+    "issue-1160-router-lifecycle",
+    "origin"
+  ]
+}
