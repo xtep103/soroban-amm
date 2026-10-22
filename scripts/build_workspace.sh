@@ -9,8 +9,8 @@
 # The ABI generator intentionally uses the narrower explicit contract list in
 # scripts/abi_contracts.sh rather than every artifact this build produces.
 #
-# Any extra arguments are forwarded to cargo, e.g.:
-#   bash scripts/build_workspace.sh --locked
+# Cargo always builds against the checked-in lockfile. Any extra arguments
+# are forwarded to cargo; a repeated --locked is removed below.
 set -euo pipefail
 
 # Crates that produce no deployable wasm artifact:
@@ -23,11 +23,20 @@ EXCLUDE_PACKAGES=(
   integration_tests
   benches
   soroban_amm_simulator
+  # Examples and Rust libraries are useful workspace members, but are not
+  # deployable Soroban contracts and must not produce release WASM.
+  flash_loan_receiver
+  soroban_amm_sdk
 )
 
 exclude_flags=()
 for pkg in "${EXCLUDE_PACKAGES[@]}"; do
   exclude_flags+=(--exclude "$pkg")
+done
+
+cargo_args=()
+for arg in "$@"; do
+  [[ "$arg" == "--locked" ]] || cargo_args+=("$arg")
 done
 
 set -x
@@ -36,7 +45,7 @@ set -x
 # Those warnings are not fatal by default but produce broken binaries
 # (neither initialize implementation is exported). Treat them as errors.
 LINKER_STDERR=$(mktemp)
-cargo build --release --target wasm32v1-none --workspace "${exclude_flags[@]}" "$@" \
+cargo build --locked --release --target wasm32v1-none --workspace "${exclude_flags[@]}" "${cargo_args[@]}" \
   2> >(tee "$LINKER_STDERR" >&2)
 
 if grep -q "function signature mismatch" "$LINKER_STDERR"; then
